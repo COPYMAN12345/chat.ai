@@ -214,4 +214,12 @@ video {
     .username {
         font-size: 14px;
     }
+}/* Camera switch buttons */
+#frontCameraButton, #backCameraButton {
+    flex: 1 1 45%; /* Allow buttons to take up less space on mobile */
+    background-color: #17a2b8; /* Different color for camera buttons */
+}
+
+#frontCameraButton:hover, #backCameraButton:hover {
+    background-color: #138496; /* Darker shade on hover */
 }
