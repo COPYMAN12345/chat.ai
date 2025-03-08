@@ -271,3 +271,37 @@ document.getElementById("file-input").addEventListener("change", (event) => {
         reader.readAsDataURL(file);
     }
 });
+// Get the new camera switch buttons
+const frontCameraButton = document.getElementById('frontCameraButton');
+const backCameraButton = document.getElementById('backCameraButton');
+
+// Function to switch between front and back cameras
+const switchCamera = async (facingMode) => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facingMode },
+            audio: true
+        });
+        localVideo.srcObject = stream;
+        localStream = stream;
+
+        // Replace the tracks in the current call if it exists
+        if (currentCall) {
+            const videoTrack = localStream.getVideoTracks()[0];
+            const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === 'video');
+            sender.replaceTrack(videoTrack);
+        }
+    } catch (error) {
+        console.error('Error switching camera:', error);
+        alert('Error switching camera. Please ensure you have granted camera permissions.');
+    }
+};
+
+// Event listeners for camera switch buttons
+frontCameraButton.addEventListener('click', () => {
+    switchCamera('user'); // 'user' is the front camera
+});
+
+backCameraButton.addEventListener('click', () => {
+    switchCamera('environment'); // 'environment' is the back camera
+});
