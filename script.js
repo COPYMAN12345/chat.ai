@@ -1,6 +1,4 @@
-// ================== P2P Chat and Video Call Functions ==================
-
-// Get DOM elements for P2P chat and video call
+// Get DOM elements
 const chatBox = document.getElementById('chatBox');
 const messageInput = document.getElementById('messageInput');
 const sendButton = document.getElementById('sendButton');
@@ -18,18 +16,41 @@ const peerIdDisplay = document.getElementById('peerIdDisplay');
 
 let peer;
 let conn;
-let localStream = null; // Initialize localStream as null
+let localStream = null;
 let currentCall;
-let username; // Variable to store the username
-let isMuted = false; // Track mute state
-let isVideoPaused = false; // Track video pause state
+let username;
+let isMuted = false;
+let isVideoPaused = false;
+
+// Function to request notification permissions
+const requestNotificationPermission = () => {
+    if (Notification.permission !== "granted") {
+        Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+                console.log("Notification permission granted.");
+            }
+        });
+    }
+};
+
+// Function to show a notification
+const showNotification = (title, message) => {
+    if (Notification.permission === "granted") {
+        new Notification(title, {
+            body: message,
+            icon: "https://cdn-icons-png.flaticon.com/512/733/733585.png" // Optional: Add an icon
+        });
+    } else {
+        console.warn("Notification permission not granted.");
+    }
+};
 
 // Function to generate a Peer ID based on the current time (HHMM format)
 const generatePeerIdFromTime = () => {
     const now = new Date();
-    const hours = String(now.getHours()).padStart(2, '0'); // Ensure 2 digits
-    const minutes = String(now.getMinutes()).padStart(2, '0'); // Ensure 2 digits
-    return hours + minutes; // Combine to form HHMM
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return hours + minutes;
 };
 
 // Function to initialize PeerJS with a custom ID
@@ -38,8 +59,7 @@ const initializePeer = (customId) => {
 
     peer.on('open', (id) => {
         console.log('PeerJS connection opened. My peer ID is:', id);
-        peerIdDisplay.textContent = 'Your Peer ID: ' + id; // Display Peer ID on the page
-        // Save the Peer ID to local storage
+        peerIdDisplay.textContent = 'Your Peer ID: ' + id;
         localStorage.setItem('peerId', id);
 
         // Auto-connect to a peer if a peer ID is stored in local storage
@@ -60,8 +80,12 @@ const initializePeer = (customId) => {
             // Notify the other peer that this user is online
             conn.send({ username: 'System', message: `${username} is online` });
             appendMessage(`${conn.peer} is online`, 'system');
+
             // Save the connected peer ID to local storage
             localStorage.setItem('connectedPeerId', conn.peer);
+
+            // Show a Chrome notification when a friend comes online
+            showNotification("Friend Online", `${conn.peer} is now online!`);
         });
         conn.on('data', (data) => {
             // Display the received message with the sender's username
@@ -72,6 +96,9 @@ const initializePeer = (customId) => {
             appendMessage(`${conn.peer} is offline`, 'system');
             // Remove the connected peer ID from local storage
             localStorage.removeItem('connectedPeerId');
+
+            // Show a Chrome notification when a friend goes offline
+            showNotification("Friend Offline", `${conn.peer} is now offline.`);
         });
     });
 
@@ -124,6 +151,9 @@ username = prompt('Enter your username (e.g., Alice):') || 'bot1';
 
 // Initialize PeerJS with the generated or stored Peer ID
 initializePeer(customId);
+
+// Request notification permissions when the page loads
+requestNotificationPermission();
 
 // Connect to another peer
 connectButton.addEventListener('click', () => {
@@ -226,213 +256,17 @@ const appendMessage = (message, type) => {
     chatBox.scrollTop = chatBox.scrollHeight;
 };
 
-// ================== AES Encryption Functions ==================
-
-async function generateKey(password, salt) {
-    const keyMaterial = await crypto.subtle.importKey(
-        "raw",
-        new TextEncoder().encode(password),
-        { name: "PBKDF2" },
-        false,
-        ["deriveKey"]
-    );
-
-    return crypto.subtle.deriveKey(
-        {
-            name: "PBKDF2",
-            salt: salt,
-            iterations: 100000,
-            hash: "SHA-256"
-        },
-        keyMaterial,
-        { name: "AES-GCM", length: 256 },
-        true,
-        ["encrypt", "decrypt"]
-    );
-}
-
-async function encryptMessage(message, password, timeLimitMinutes) {
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const iv = crypto.getRandomValues(new Uint8Array(12)); // 12 bytes for AES-GCM
-
-    const key = await generateKey(password, salt);
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const messageWithTimestamp = `${timestamp}:${timeLimitMinutes}:${message}`;
-
-    const encodedMessage = new TextEncoder().encode(messageWithTimestamp);
-
-    const encrypted = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        key,
-        encodedMessage
-    );
-
-    const encryptedMessage = new Uint8Array([...salt, ...iv, ...new Uint8Array(encrypted)]);
-    return btoa(String.fromCharCode(...encryptedMessage));
-}
-
-document.getElementById("encryptBtn").addEventListener("click", async () => {
-    const message = document.getElementById("message").value;
-    const password = document.getElementById("password").value;
-    const timeLimit = document.getElementById("timeLimit").value;
-
-    if (!message || !password || !timeLimit) {
-        alert("Please fill in all fields.");
-        return;
-    }
-
+// Function to request camera and microphone access
+const requestMediaPermissions = async () => {
     try {
-        const encryptedMessage = await encryptMessage(message, password, timeLimit);
-        document.getElementById("encryptedMessage").value = encryptedMessage;
-
-        // Auto-fill the encrypted message into the P2P chat input box
-        document.getElementById("messageInput").value = encryptedMessage;
-
-        // Generate QR Code
-        const qrcodeContainer = document.getElementById("qrcode");
-        qrcodeContainer.innerHTML = ""; // Clear previous QR code
-        new QRCode(qrcodeContainer, {
-            text: encryptedMessage,
-            width: 256,
-            height: 256,
-        });
-
-        // Add double-click event listener to the QR code container
-        qrcodeContainer.addEventListener("dblclick", () => {
-            navigator.clipboard.writeText(encryptedMessage)
-                .then(() => {
-                    alert("Encrypted message copied to clipboard!");
-                })
-                .catch((err) => {
-                    console.error("Failed to copy encrypted message:", err);
-                    alert("Failed to copy encrypted message. Please try again.");
-                });
-        });
-
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = stream;
+        localStream = stream;
+        console.log('Camera and microphone access granted.');
+        return true; // Permissions granted
     } catch (error) {
-        console.error("Encryption failed:", error);
-        alert("Encryption failed. Please try again.");
+        console.warn('Camera and microphone access denied:', error);
+        alert('Camera and microphone access denied. You cannot start a video call.');
+        return false; // Permissions denied
     }
-});
-
-// ================== AES Decryption Functions ==================
-
-async function decryptMessage(encryptedMessage, password) {
-    try {
-        const data = Uint8Array.from(atob(encryptedMessage), c => c.charCodeAt(0));
-
-        const salt = data.slice(0, 16);
-        const iv = data.slice(16, 28); // 12 bytes for AES-GCM
-        const encryptedData = data.slice(28);
-
-        const key = await generateKey(password, salt);
-
-        const decrypted = await crypto.subtle.decrypt(
-            { name: "AES-GCM", iv },
-            key,
-            encryptedData
-        );
-
-        const decryptedMessage = new TextDecoder().decode(decrypted);
-        const [timestampStr, timeLimitStr, message] = decryptedMessage.split(":", 3);
-
-        const timestamp = parseInt(timestampStr, 10);
-        const timeLimitMinutes = parseInt(timeLimitStr, 10);
-
-        const currentTime = Math.floor(Date.now() / 1000);
-        if (currentTime - timestamp > timeLimitMinutes * 60) {
-            throw new Error("The message is older than the specified time limit and is no longer valid.");
-        }
-
-        return message;
-    } catch (error) {
-        console.error("Decryption failed:", error);
-        throw new Error("Decryption failed. The message may be invalid or expired.");
-    }
-}
-
-document.getElementById("decryptBtn").addEventListener("click", async () => {
-    const encryptedMessage = document.getElementById("encryptedMessageInput").value;
-    const password = document.getElementById("decryptionPassword").value;
-
-    if (!encryptedMessage || !password) {
-        alert("Please fill in all fields.");
-        return;
-    }
-
-    try {
-        const decryptedMessage = await decryptMessage(encryptedMessage, password);
-        document.getElementById("decryptedMessage").value = decryptedMessage;
-    } catch (error) {
-        console.error("Decryption failed:", error);
-        alert("Decryption failed. The message may be invalid or expired.");
-    }
-});
-
-// ================== QR Code Scanner Functions ==================
-
-document.getElementById("scan-btn").addEventListener("click", () => {
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-        .then(stream => {
-            const qrVideo = document.getElementById("qr-video");
-            qrVideo.srcObject = stream;
-            qrVideo.play();
-            requestAnimationFrame(scanQR);
-        })
-        .catch(err => {
-            console.error("Error accessing the camera: ", err);
-            alert("Error accessing the camera. Please ensure you have granted camera permissions.");
-        });
-});
-
-function scanQR() {
-    const qrVideo = document.getElementById("qr-video");
-    if (qrVideo.readyState === qrVideo.HAVE_ENOUGH_DATA) {
-        const canvas = document.createElement("canvas");
-        canvas.width = qrVideo.videoWidth;
-        canvas.height = qrVideo.videoHeight;
-        const context = canvas.getContext("2d");
-        context.drawImage(qrVideo, 0, 0, canvas.width, canvas.height);
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
-        if (code) {
-            document.getElementById("encryptedMessageInput").value = code.data;
-            qrVideo.srcObject.getTracks().forEach(track => track.stop());
-        } else {
-            requestAnimationFrame(scanQR);
-        }
-    } else {
-        requestAnimationFrame(scanQR);
-    }
-}
-
-document.getElementById("upload-btn").addEventListener("click", () => {
-    document.getElementById("file-input").click();
-});
-
-document.getElementById("file-input").addEventListener("change", (event) => {
-    const file = event.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const img = new Image();
-            img.src = e.target.result;
-            img.onload = () => {
-                const canvas = document.createElement("canvas");
-                canvas.width = img.width;
-                canvas.height = img.height;
-                const context = canvas.getContext("2d");
-                context.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                const code = jsQR(imageData.data, imageData.width, imageData.height);
-                if (code) {
-                    document.getElementById("encryptedMessageInput").value = code.data;
-                } else {
-                    alert("No QR code found in the uploaded image.");
-                }
-            };
-        };
-        reader.readAsDataURL(file);
-    }
-});
+};
