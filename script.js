@@ -39,6 +39,14 @@ const initializePeer = (customId) => {
     peer.on('open', (id) => {
         console.log('PeerJS connection opened. My peer ID is:', id);
         peerIdDisplay.textContent = 'Your Peer ID: ' + id; // Display Peer ID on the page
+        // Save the Peer ID to local storage
+        localStorage.setItem('peerId', id);
+
+        // Auto-connect to a peer if a peer ID is stored in local storage
+        const storedPeerId = localStorage.getItem('connectedPeerId');
+        if (storedPeerId) {
+            connectToPeer(storedPeerId);
+        }
     });
 
     peer.on('error', (error) => {
@@ -49,12 +57,21 @@ const initializePeer = (customId) => {
     peer.on('connection', (connection) => {
         conn = connection;
         conn.on('open', () => {
-            conn.send({ username: 'System', message: 'Connected to ' + username });
-            appendMessage('Connected to ' + conn.peer, 'system');
+            // Notify the other peer that this user is online
+            conn.send({ username: 'System', message: `${username} is online` });
+            appendMessage(`${conn.peer} is online`, 'system');
+            // Save the connected peer ID to local storage
+            localStorage.setItem('connectedPeerId', conn.peer);
         });
         conn.on('data', (data) => {
             // Display the received message with the sender's username
             appendMessage(data.username + ': ' + data.message, data.username === 'System' ? 'system' : 'remote');
+        });
+        conn.on('close', () => {
+            // Notify when the peer disconnects
+            appendMessage(`${conn.peer} is offline`, 'system');
+            // Remove the connected peer ID from local storage
+            localStorage.removeItem('connectedPeerId');
         });
     });
 
@@ -72,42 +89,46 @@ const initializePeer = (customId) => {
     });
 };
 
-// Function to request camera and microphone access
-const requestMediaPermissions = async () => {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = stream;
-        localStream = stream;
-        console.log('Camera and microphone access granted.');
-        return true; // Permissions granted
-    } catch (error) {
-        console.warn('Camera and microphone access denied:', error);
-        alert('Camera and microphone access denied. You cannot start a video call.');
-        return false; // Permissions denied
-    }
+// Function to connect to a peer
+const connectToPeer = (peerId) => {
+    if (!peerId) return alert('Please enter a Peer ID');
+    conn = peer.connect(peerId);
+    conn.on('open', () => {
+        // Notify the other peer that this user is online
+        conn.send({ username: 'System', message: `${username} is online` });
+        appendMessage(`Connected to ${peerId}`, 'system');
+        // Save the connected peer ID to local storage
+        localStorage.setItem('connectedPeerId', peerId);
+    });
+    conn.on('data', (data) => {
+        appendMessage(data.username + ': ' + data.message, data.username === 'System' ? 'system' : 'remote');
+    });
+    conn.on('close', () => {
+        // Notify when the peer disconnects
+        appendMessage(`${peerId} is offline`, 'system');
+        // Remove the connected peer ID from local storage
+        localStorage.removeItem('connectedPeerId');
+    });
 };
 
-// Generate Peer ID from current time
-const customId = generatePeerIdFromTime();
+// Check if a Peer ID is already stored in local storage
+let customId = localStorage.getItem('peerId');
+
+// If no Peer ID is stored, generate one based on the current time
+if (!customId) {
+    customId = generatePeerIdFromTime();
+}
 
 // Prompt for username, default to "bot1" if not provided
 username = prompt('Enter your username (e.g., Alice):') || 'bot1';
 
-// Initialize PeerJS with the generated Peer ID
+// Initialize PeerJS with the generated or stored Peer ID
 initializePeer(customId);
 
 // Connect to another peer
 connectButton.addEventListener('click', () => {
     const peerId = peerIdInput.value;
-    if (!peerId) return alert('Please enter a Peer ID');
-    conn = peer.connect(peerId);
-    conn.on('open', () => {
-        conn.send({ username: 'System', message: 'Connected to ' + username });
-        appendMessage('Connected to ' + peerId, 'system');
-    });
-    conn.on('data', (data) => {
-        appendMessage(data.username + ': ' + data.message, data.username === 'System' ? 'system' : 'remote');
-    });
+    connectToPeer(peerId);
 });
 
 // Send a message
@@ -204,6 +225,150 @@ const appendMessage = (message, type) => {
     chatBox.appendChild(messageElement);
     chatBox.scrollTop = chatBox.scrollHeight;
 };
+
+// ================== AES Encryption Functions ==================
+
+async function generateKey(password, salt) {
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(password),
+        { name: "PBKDF2" },
+        false,
+        ["deriveKey"]
+    );
+
+    return crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: 100000,
+            hash: "SHA-256"
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+    );
+}
+
+async function encryptMessage(message, password, timeLimitMinutes) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12)); // 12 bytes for AES-GCM
+
+    const key = await generateKey(password, salt);
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const messageWithTimestamp = `${timestamp}:${timeLimitMinutes}:${message}`;
+
+    const encodedMessage = new TextEncoder().encode(messageWithTimestamp);
+
+    const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        encodedMessage
+    );
+
+    const encryptedMessage = new Uint8Array([...salt, ...iv, ...new Uint8Array(encrypted)]);
+    return btoa(String.fromCharCode(...encryptedMessage));
+}
+
+document.getElementById("encryptBtn").addEventListener("click", async () => {
+    const message = document.getElementById("message").value;
+    const password = document.getElementById("password").value;
+    const timeLimit = document.getElementById("timeLimit").value;
+
+    if (!message || !password || !timeLimit) {
+        alert("Please fill in all fields.");
+        return;
+    }
+
+    try {
+        const encryptedMessage = await encryptMessage(message, password, timeLimit);
+        document.getElementById("encryptedMessage").value = encryptedMessage;
+
+        // Auto-fill the encrypted message into the P2P chat input box
+        document.getElementById("messageInput").value = encryptedMessage;
+
+        // Generate QR Code
+        const qrcodeContainer = document.getElementById("qrcode");
+        qrcodeContainer.innerHTML = ""; // Clear previous QR code
+        new QRCode(qrcodeContainer, {
+            text: encryptedMessage,
+            width: 256,
+            height: 256,
+        });
+
+        // Add double-click event listener to the QR code container
+        qrcodeContainer.addEventListener("dblclick", () => {
+            navigator.clipboard.writeText(encryptedMessage)
+                .then(() => {
+                    alert("Encrypted message copied to clipboard!");
+                })
+                .catch((err) => {
+                    console.error("Failed to copy encrypted message:", err);
+                    alert("Failed to copy encrypted message. Please try again.");
+                });
+        });
+
+    } catch (error) {
+        console.error("Encryption failed:", error);
+        alert("Encryption failed. Please try again.");
+    }
+});
+
+// ================== AES Decryption Functions ==================
+
+async function decryptMessage(encryptedMessage, password) {
+    try {
+        const data = Uint8Array.from(atob(encryptedMessage), c => c.charCodeAt(0));
+
+        const salt = data.slice(0, 16);
+        const iv = data.slice(16, 28); // 12 bytes for AES-GCM
+        const encryptedData = data.slice(28);
+
+        const key = await generateKey(password, salt);
+
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv },
+            key,
+            encryptedData
+        );
+
+        const decryptedMessage = new TextDecoder().decode(decrypted);
+        const [timestampStr, timeLimitStr, message] = decryptedMessage.split(":", 3);
+
+        const timestamp = parseInt(timestampStr, 10);
+        const timeLimitMinutes = parseInt(timeLimitStr, 10);
+
+        const currentTime = Math.floor(Date.now() / 1000);
+        if (currentTime - timestamp > timeLimitMinutes * 60) {
+            throw new Error("The message is older than the specified time limit and is no longer valid.");
+        }
+
+        return message;
+    } catch (error) {
+        console.error("Decryption failed:", error);
+        throw new Error("Decryption failed. The message may be invalid or expired.");
+    }
+}
+
+document.getElementById("decryptBtn").addEventListener("click", async () => {
+    const encryptedMessage = document.getElementById("encryptedMessageInput").value;
+    const password = document.getElementById("decryptionPassword").value;
+
+    if (!encryptedMessage || !password) {
+        alert("Please fill in all fields.");
+        return;
+    }
+
+    try {
+        const decryptedMessage = await decryptMessage(encryptedMessage, password);
+        document.getElementById("decryptedMessage").value = decryptedMessage;
+    } catch (error) {
+        console.error("Decryption failed:", error);
+        alert("Decryption failed. The message may be invalid or expired.");
+    }
+});
 
 // ================== QR Code Scanner Functions ==================
 
